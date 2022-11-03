@@ -43,6 +43,14 @@
 #include "qsv_internal.h"
 #include "qsvenc.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+static bool perf_file_created = false;
+static FILE *perf_fptr = NULL;
+static clock_t perf_start_tp;
+
 struct profile_names {
     mfxU16 profile;
     const char *name;
@@ -2287,6 +2295,7 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
     if (!pkt.sync)
         goto nomem;
 
+    perf_start_tp = clock();
     do {
         ret = MFXVideoENCODE_EncodeFrameAsync(q->session, enc_ctrl, surf, pkt.bs, pkt.sync);
         if (ret == MFX_WRN_DEVICE_BUSY)
@@ -2351,6 +2360,17 @@ int ff_qsv_encode(AVCodecContext *avctx, QSVEncContext *q,
         do {
             ret = MFXVideoCORE_SyncOperation(q->session, *qpkt.sync, 1000);
         } while (ret == MFX_WRN_IN_EXECUTION);
+        perf_start_tp = clock() - perf_start_tp;
+        if (perf_file_created == false)
+        {
+            perf_fptr = fopen("perf_qsvenc.csv","w");
+            fprintf(perf_fptr,"latency(ms),frame_size(byte)\n");
+            fclose(perf_fptr);
+            perf_file_created = true;
+        }
+        perf_fptr = fopen("perf_qsvenc.csv","a");
+        fprintf(perf_fptr,"%f,%d\n", ((double)perf_start_tp*1000)/CLOCKS_PER_SEC, qpkt.bs->DataLength);
+        fclose(perf_fptr);
 
         qpkt.pkt.dts  = av_rescale_q(qpkt.bs->DecodeTimeStamp, (AVRational){1, 90000}, avctx->time_base);
         qpkt.pkt.pts  = av_rescale_q(qpkt.bs->TimeStamp,       (AVRational){1, 90000}, avctx->time_base);
