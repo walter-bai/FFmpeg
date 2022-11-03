@@ -36,6 +36,15 @@
 #include "internal.h"
 #include "packet_internal.h"
 
+#define WIN32_LEAN_AND_MEAN
+#include <stdio.h>
+#include <stdlib.h>
+#include <Windows.h>
+
+static bool perf_file_created = false;
+static FILE * perf_fptr = nullptr;
+static LARGE_INTEGER perf_start_tp;
+
 #define CHECK_CU(x) FF_CUDA_CHECK_DL(avctx, dl_fn->cuda_dl, x)
 
 #define NVENC_CAP 0x30
@@ -2076,6 +2085,21 @@ static int process_output_surface(AVCodecContext *avctx, AVPacket *pkt, NvencSur
         res = nvenc_print_error(avctx, nv_status, "Failed locking bitstream buffer");
         goto error;
     }
+    LARGE_INTEGER perf_end_tp;
+    ::QueryPerformanceCounter(&perf_end_tp);
+    LARGE_INTEGER frequency;
+    ::QueryPerformanceFrequency(&frequency);
+    double interval = 1000.0 * static_cast<double>(perf_end_tp.QuadPart - perf_start_tp.QuadPart) / frequency.QuadPart;
+    if (perf_file_created == false)
+    {
+        perf_fptr = fopen("perf_nvenc.csv","w");
+        fprintf(perf_fptr,"latency(ms),frame_size(byte)\n");
+        fclose(perf_fptr);
+        perf_file_created = true;
+    }
+    perf_fptr = fopen("perf_nvenc.csv","a");
+    fprintf(perf_fptr,"%f,%d\n", interval, lock_params.bitstreamSizeInBytes);
+    fclose(perf_fptr);
 
     res = ff_get_encode_buffer(avctx, pkt, lock_params.bitstreamSizeInBytes, 0);
 
@@ -2430,6 +2454,7 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
     if (res < 0)
         return res;
 
+    ::QueryPerformanceCounter(&perf_start_tp);
     nv_status = p_nvenc->nvEncEncodePicture(ctx->nvencoder, &pic_params);
 
     for (i = 0; i < sei_count; i++)
